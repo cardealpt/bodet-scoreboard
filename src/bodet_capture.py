@@ -63,6 +63,7 @@ class BodetCaptureServer:
                 try:
                     client_socket, client_address = self.socket.accept()
                     logger.info(f"Connected to Scorepad at {client_address}")
+                    logger.info(f"Socket details: local={client_socket.getsockname()}, remote={client_socket.getpeername()}")
                     
                     # Handle client connection in a separate thread
                     client_thread = threading.Thread(
@@ -90,59 +91,106 @@ class BodetCaptureServer:
     def _handle_client(self, client_socket: socket.socket, client_address):
         """Handle incoming data from a client connection."""
         try:
+            # Set socket timeout to avoid blocking indefinitely
+            client_socket.settimeout(5.0)
             buffer = bytearray()
+            total_bytes_received = 0
+            
+            logger.info(f"Started handling client {client_address}")
             
             while self.running:
                 try:
                     data = client_socket.recv(4096)
                     if not data:
-                        logger.info(f"Connection closed by {client_address}")
+                        logger.info(f"Connection closed by {client_address} (no more data)")
+                        # Process any remaining data in buffer before closing
+                        if len(buffer) > 0:
+                            logger.info(f"Processing remaining {len(buffer)} bytes in buffer")
+                            self._process_buffer(buffer, client_address)
                         break
                         
+                    total_bytes_received += len(data)
+                    logger.info(f"Received {len(data)} bytes from {client_address} (total: {total_bytes_received})")
+                    logger.info(f"Raw data (hex): {data.hex()}")
+                    logger.info(f"Raw data (repr): {repr(data)}")
+                    
                     buffer.extend(data)
                     
                     # Process complete messages from buffer
-                    while len(buffer) > 0:
-                        # Look for SOH (0x01) to start a new message
-                        soh_index = buffer.find(0x01)
-                        if soh_index == -1:
-                            # No SOH found, clear buffer
-                            buffer.clear()
-                            break
-                            
-                        # Remove any data before SOH
-                        if soh_index > 0:
-                            logger.debug(f"Dropping {soh_index} bytes before SOH")
-                            buffer = buffer[soh_index:]
-                            
-                        # Look for ETX (0x03) which marks end of message
-                        etx_index = buffer.find(0x03, 1)
-                        if etx_index == -1:
-                            # Incomplete message, wait for more data
-                            break
-                            
-                        # Extract message (SOH to ETX + LRC byte)
-                        if len(buffer) > etx_index + 1:
-                            message = bytes(buffer[:etx_index + 2])
-                            buffer = buffer[etx_index + 2:]
-                            
-                            # Add to processing queue
-                            self.message_queue.put((message, time.time()))
-                        else:
-                            # Need LRC byte, wait for more data
-                            break
-                            
+                    messages_processed = self._process_buffer(buffer, client_address)
+                    
+                    # If we processed messages but buffer still has data, log it
+                    if len(buffer) > 0:
+                        logger.debug(f"Buffer still contains {len(buffer)} bytes: {buffer.hex()}")
+                        
                 except socket.timeout:
+                    logger.debug(f"Socket timeout for {client_address}, checking buffer...")
+                    # Process any data in buffer even on timeout
+                    if len(buffer) > 0:
+                        self._process_buffer(buffer, client_address)
                     continue
                 except socket.error as e:
                     logger.error(f"Socket error from {client_address}: {e}")
+                    # Process any remaining data before breaking
+                    if len(buffer) > 0:
+                        logger.info(f"Processing remaining {len(buffer)} bytes before error")
+                        self._process_buffer(buffer, client_address)
                     break
                     
         except Exception as e:
-            logger.error(f"Error handling client {client_address}: {e}")
+            logger.error(f"Error handling client {client_address}: {e}", exc_info=True)
         finally:
             client_socket.close()
-            logger.info(f"Connection to {client_address} closed")
+            logger.info(f"Connection to {client_address} closed (total bytes received: {total_bytes_received})")
+            
+    def _process_buffer(self, buffer: bytearray, client_address) -> int:
+        """
+        Process messages from buffer.
+        
+        Returns:
+            Number of messages processed
+        """
+        messages_processed = 0
+        
+        while len(buffer) > 0:
+            # Look for SOH (0x01) to start a new message
+            soh_index = buffer.find(0x01)
+            if soh_index == -1:
+                # No SOH found
+                if len(buffer) > 0:
+                    logger.warning(f"No SOH found in buffer, remaining {len(buffer)} bytes: {buffer.hex()}")
+                    logger.warning(f"Buffer content (repr): {repr(buffer)}")
+                buffer.clear()
+                break
+                
+            # Remove any data before SOH
+            if soh_index > 0:
+                logger.warning(f"Dropping {soh_index} bytes before SOH: {buffer[:soh_index].hex()}")
+                buffer = buffer[soh_index:]
+                
+            # Look for ETX (0x03) which marks end of message
+            etx_index = buffer.find(0x03, 1)
+            if etx_index == -1:
+                # Incomplete message, wait for more data
+                logger.debug(f"Incomplete message, waiting for more data. Current buffer: {buffer.hex()}")
+                break
+                
+            # Extract message (SOH to ETX + LRC byte)
+            if len(buffer) > etx_index + 1:
+                message = bytes(buffer[:etx_index + 2])
+                buffer = buffer[etx_index + 2:]
+                
+                logger.info(f"Extracted complete message ({len(message)} bytes): {message.hex()}")
+                
+                # Add to processing queue
+                self.message_queue.put((message, time.time()))
+                messages_processed += 1
+            else:
+                # Need LRC byte, wait for more data
+                logger.debug(f"Message incomplete, need LRC byte. Current: {buffer.hex()}")
+                break
+                
+        return messages_processed
             
     def _process_messages(self):
         """Process messages from the queue."""

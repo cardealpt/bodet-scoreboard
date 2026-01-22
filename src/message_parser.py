@@ -74,12 +74,15 @@ class MessageParser:
         
         # Validate LRC
         calculated_lrc = self._calculate_lrc(raw_message[1:etx_index + 1])  # Address to ETX
-        if received_lrc != calculated_lrc:
+        lrc_valid = received_lrc == calculated_lrc
+        if not lrc_valid:
             logger.warning(
                 f"LRC mismatch: received 0x{received_lrc:02X}, "
                 f"calculated 0x{calculated_lrc:02X}"
             )
-            # Continue anyway for debugging purposes
+            logger.debug(f"LRC calculation data: {raw_message[1:etx_index + 1].hex()}")
+        else:
+            logger.debug("LRC validation passed")
             
         # Parse the data portion
         return self._parse_data(data)
@@ -114,30 +117,28 @@ class MessageParser:
         Returns:
             Dictionary with parsed match data
         """
-        if len(data) < 2:
-            logger.warning(f"Data too short: {len(data)} bytes")
-            return None
-            
-        # First two bytes typically indicate message type
-        # Format varies by sport - we'll start with a generic parser
-        # and refine based on actual messages received
+        logger.info(f"Parsing data: {len(data)} bytes - {data.hex()}")
         
-        message_type = None
-        if len(data) >= 2:
-            # Try to identify message type
-            # Common patterns: first byte might be sport ID, second byte message type
-            byte1 = data[0]
-            byte2 = data[1] if len(data) > 1 else 0
+        if len(data) < 2:
+            logger.warning(f"Data too short: {len(data)} bytes - {data.hex()}")
+            # Still return basic info for debugging
+            return {
+                'raw_data': data.hex(),
+                'data_length': len(data),
+                'message_type': 'too_short',
+                'timestamp': time.time(),
+                'error': 'Data too short for parsing'
+            }
             
-            # For now, log raw data and try basic parsing
-            logger.info(f"Received message - Length: {len(data)}, First bytes: {data[:min(10, len(data))].hex()}")
-            
-            # Try to parse as ASCII where possible
-            try:
-                ascii_data = data.decode('ascii', errors='ignore')
-                logger.info(f"ASCII representation: {repr(ascii_data)}")
-            except:
-                pass
+        # Log raw data and try ASCII parsing
+        logger.info(f"Received message - Length: {len(data)}, First bytes: {data[:min(10, len(data))].hex()}")
+        
+        # Try to parse as ASCII where possible
+        try:
+            ascii_data = data.decode('ascii', errors='ignore')
+            logger.info(f"ASCII representation: {repr(ascii_data)}")
+        except Exception as e:
+            logger.debug(f"Could not decode as ASCII: {e}")
                 
         # Try to identify sport and message type
         # Based on Bodet protocol, first bytes typically indicate:
@@ -148,7 +149,8 @@ class MessageParser:
             'raw_data': data.hex(),
             'data_length': len(data),
             'message_type': 'unknown',
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            'all_bytes': [f"0x{b:02X} ({b})" for b in data[:min(20, len(data))]]
         }
         
         # Extract individual bytes for analysis
