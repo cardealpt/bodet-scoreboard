@@ -73,36 +73,62 @@ class OutputHandler:
         
     def _output_console(self, parsed_data: Dict[str, Any]):
         """Output parsed data to console."""
-        print("\n" + "="*60)
-        print("BODET SCOREPAD MESSAGE RECEIVED")
-        print("="*60)
+        print("\n" + "="*70)
+        print(">>> BODET SCOREPAD MESSAGE RECEIVED <<<")
+        print("="*70)
+        
+        # Print timestamp
+        import datetime
+        print(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         
         # Print raw data info
         if 'raw_data' in parsed_data:
-            print(f"Raw Data (hex): {parsed_data['raw_data']}")
+            print(f"\nRaw Data (hex): {parsed_data['raw_data']}")
             print(f"Data Length: {parsed_data['data_length']} bytes")
             
         # Print individual bytes if available
-        for i in range(1, 5):
-            key = f'byte{i}'
-            if key in parsed_data:
-                print(f"{key.upper()}: {parsed_data[key]}")
+        if 'byte1' in parsed_data or 'byte2' in parsed_data:
+            print("\n--- Message Header ---")
+            for i in range(1, 5):
+                key = f'byte{i}'
+                if key in parsed_data:
+                    print(f"  {key.upper()}: {parsed_data[key]}")
                 
         # Print message type
-        print(f"Message Type: {parsed_data.get('message_type', 'unknown')}")
+        msg_type = parsed_data.get('message_type', 'unknown')
+        print(f"\nMessage Type: {msg_type.upper()}")
         
         # Print match data if available
-        if 'score' in parsed_data or 'time' in parsed_data:
-            print("\n--- Match Data ---")
-            if 'score' in parsed_data:
-                score = parsed_data['score']
-                print(f"Score - Home: {score.get('home', 0)}, Guest: {score.get('guest', 0)}")
-            if 'time' in parsed_data:
-                print(f"Time: {parsed_data['time']}")
-            if 'period' in parsed_data:
-                print(f"Period: {parsed_data['period']}")
+        has_match_data = False
+        if 'score' in parsed_data:
+            score = parsed_data['score']
+            if 'home' in score or 'guest' in score:
+                if not has_match_data:
+                    print("\n--- Match Data ---")
+                    has_match_data = True
+                print(f"  Score - Home: {score.get('home', 0)}, Guest: {score.get('guest', 0)}")
                 
-        print("="*60 + "\n")
+        if 'time' in parsed_data:
+            if not has_match_data:
+                print("\n--- Match Data ---")
+                has_match_data = True
+            print(f"  Time: {parsed_data['time']}")
+            
+        if 'period' in parsed_data:
+            if not has_match_data:
+                print("\n--- Match Data ---")
+                has_match_data = True
+            print(f"  Period: {parsed_data['period']}")
+        
+        # Print byte analysis if available (for debugging)
+        if 'byte_analysis' in parsed_data:
+            print("\n--- Byte Analysis ---")
+            for byte_info in parsed_data['byte_analysis'][:10]:  # Limit to first 10
+                print(f"  {byte_info}")
+            if len(parsed_data['byte_analysis']) > 10:
+                print(f"  ... ({len(parsed_data['byte_analysis']) - 10} more bytes)")
+                
+        print("="*70 + "\n")
         
     def _update_match_data(self, parsed_data: Dict[str, Any]):
         """
